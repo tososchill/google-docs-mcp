@@ -3,6 +3,7 @@ import { UserError } from 'fastmcp';
 import { z } from 'zod';
 import { gmail_v1 } from 'googleapis';
 import { getGmailClient } from '../../clients.js';
+import { buildMimeMessage } from './_mime.js';
 
 export const forwardEmailParams = z.object({
   messageId: z.string().describe('The Gmail message ID to forward (from searchEmails results).'),
@@ -88,48 +89,18 @@ async function collectAttachments(
   }
 }
 
-function buildMimeMessage(opts: {
-  to: string;
-  subject: string;
-  referencesHeader: string | null;
-  bodyText: string;
-  attachments: CollectedAttachment[];
-}): string {
-  const { to, subject, referencesHeader, bodyText, attachments } = opts;
-  let mime = `To: ${to}\r\n`;
-  mime += `Subject: ${subject}\r\n`;
-  if (referencesHeader) {
-    mime += `References: ${referencesHeader}\r\n`;
-    mime += `In-Reply-To: ${referencesHeader}\r\n`;
-  }
-  mime += `MIME-Version: 1.0\r\n`;
-
-  if (attachments.length === 0) {
-    mime += `Content-Type: text/plain; charset=UTF-8\r\n`;
-    mime += `Content-Transfer-Encoding: 7bit\r\n\r\n`;
-    mime += bodyText;
-    return mime;
-  }
-
-  const boundary = `bnd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-  mime += `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n`;
-  mime += `--${boundary}\r\n`;
-  mime += `Content-Type: text/plain; charset=UTF-8\r\n`;
-  mime += `Content-Transfer-Encoding: 7bit\r\n\r\n`;
-  mime += bodyText + '\r\n';
-
-  for (const att of attachments) {
-    mime += `--${boundary}\r\n`;
-    mime += `Content-Type: ${att.mimeType}; name="${att.filename}"\r\n`;
-    mime += `Content-Disposition: attachment; filename="${att.filename}"\r\n`;
-    mime += `Content-Transfer-Encoding: base64\r\n\r\n`;
-    const stdBase64 = att.dataBase64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const wrapped = stdBase64.match(/.{1,76}/g)?.join('\r\n') || stdBase64;
-    mime += wrapped + '\r\n';
-  }
-  mime += `--${boundary}--\r\n`;
-  return mime;
-}
+// Der frueher hier stehende eigene MIME-Builder ist entfallen (2026-08-15).
+//
+// `_mime.ts` wurde beim Phase-1a-Refactor AUS dieser Datei extrahiert, aber
+// die Datei selbst nie auf die geteilte Fassung umgestellt. Die Kopie driftete
+// dadurch weiter: sie schrieb den Betreff roh in den Header, waehrend RFC 5322
+// dort nur US-ASCII zulaesst. Weitergeleitete Abmahnungen an unsere Kanzlei
+// kamen deshalb als "Fwd: ... Ã¢Â€Â“ Az: CY-92920-MM" an.
+//
+// Die uebrigen lokalen Helfer (decodeBase64Url, extractPlainText,
+// collectAttachments) sind ebenfalls Kopien, weichen aber inhaltlich von
+// _mime.ts ab und bleiben deshalb bewusst unangetastet — ihre Zusammenlegung
+// ist eigene Arbeit mit eigener Absicherung.
 
 export async function executeForwardEmail(
   args: ForwardEmailArgs,
@@ -174,7 +145,9 @@ export async function executeForwardEmail(
   const mime = buildMimeMessage({
     to: args.to,
     subject: newSubject,
-    referencesHeader: origMessageId || null,
+    // Die geteilte Fassung leitet References aus inReplyTo ab, wenn references
+    // fehlt — das ergibt dieselben zwei Header wie die fruehere lokale Kopie.
+    inReplyTo: origMessageId || undefined,
     bodyText: newBodyText,
     attachments,
   });

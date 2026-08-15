@@ -17,6 +17,23 @@ function decodeBase64Url(data: string): string {
   return Buffer.from(padded, 'base64').toString('utf-8');
 }
 
+/**
+ * Holt den Klartext-Body aus einem MIME-Dokument.
+ *
+ * Seit 2026-08-15 wird ein Body mit Nicht-ASCII base64-kodiert, statt ihn roh
+ * unter der Falschangabe "Content-Transfer-Encoding: 7bit" zu verschicken.
+ * Wer hier weiter im rohen MIME nach "prüfen" sucht, findet nichts — und haelt
+ * eine korrekte Kodierung faelschlich fuer einen verlorenen Body.
+ */
+function decodeMimeBody(mime: string): string {
+  const boundary = mime.match(/boundary="([^"]+)"/)?.[1];
+  const part = boundary ? (mime.split(`--${boundary}`)[1] ?? '') : mime;
+  const [headers, ...rest] = part.split('\r\n\r\n');
+  const payload = rest.join('\r\n\r\n');
+  if (!/Content-Transfer-Encoding:\s*base64/i.test(headers)) return payload;
+  return Buffer.from(payload.replace(/\r\n/g, '').trim(), 'base64').toString('utf-8');
+}
+
 function makeMockGmailForForward(opts: {
   origPayload?: any;
   attachmentData?: Record<string, string>;
@@ -106,13 +123,13 @@ describe('forwardEmail', () => {
     );
 
     const sentRaw = mockGmail.users.messages.send.mock.calls[0][0].requestBody.raw;
-    const decodedMime = decodeBase64Url(sentRaw);
+    const body = decodeMimeBody(decodeBase64Url(sentRaw));
 
-    expect(decodedMime).toContain('---------- Forwarded message ----------');
-    expect(decodedMime).toContain('From: sender@example.com');
-    expect(decodedMime).toContain('Subject: Wichtige Abmahnung');
-    expect(decodedMime).toContain('To: tom@grundwerk.digital');
-    expect(decodedMime).toContain('Bitte sofort prüfen.');
+    expect(body).toContain('---------- Forwarded message ----------');
+    expect(body).toContain('From: sender@example.com');
+    expect(body).toContain('Subject: Wichtige Abmahnung');
+    expect(body).toContain('To: tom@grundwerk.digital');
+    expect(body).toContain('Bitte sofort prüfen.');
   });
 
   it('prepends additionalMessage BEFORE the Forwarded separator', async () => {
@@ -130,11 +147,11 @@ describe('forwardEmail', () => {
       mockGmail as any
     );
 
-    const decodedMime = decodeBase64Url(
-      mockGmail.users.messages.send.mock.calls[0][0].requestBody.raw
+    const body = decodeMimeBody(
+      decodeBase64Url(mockGmail.users.messages.send.mock.calls[0][0].requestBody.raw)
     );
-    const additionalIdx = decodedMime.indexOf('FYI bitte juristisch prüfen.');
-    const separatorIdx = decodedMime.indexOf('---------- Forwarded message ----------');
+    const additionalIdx = body.indexOf('FYI bitte juristisch prüfen.');
+    const separatorIdx = body.indexOf('---------- Forwarded message ----------');
     expect(additionalIdx).toBeGreaterThan(-1);
     expect(additionalIdx).toBeLessThan(separatorIdx);
   });
