@@ -73,6 +73,32 @@ const SAMPLE_ORIG_PAYLOAD = {
   ],
 };
 
+/**
+ * Liefert den lesbaren Text-Part einer MIME-Nachricht.
+ *
+ * Seit dem RFC-Fix vom 2026-08-20 wird ein Body mit Umlauten als base64
+ * uebertragen statt als Klartext (UTF-8 ist 8-Bit und darf nicht als 7bit
+ * deklariert werden). Diese Tests pruefen Body-INHALTE; sie muessen den Part
+ * deshalb erst dekodieren, so wie es jeder Mail-Client tut. Die Zusicherungen
+ * selbst bleiben unveraendert.
+ */
+function readableBody(mime: string): string {
+  const parts = mime.split(/\r\n\r\n/);
+  const isB64 = /Content-Transfer-Encoding:\s*base64/i;
+  let out = mime;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (isB64.test(parts[i]) && !/Content-Disposition:\s*attachment/i.test(parts[i])) {
+      const payload = parts[i + 1].split(/\r\n--/)[0].replace(/\r?\n/g, '');
+      try {
+        out += '\n' + Buffer.from(payload, 'base64').toString('utf8');
+      } catch {
+        /* kein gueltiges base64 — Rohtext genuegt */
+      }
+    }
+  }
+  return out;
+}
+
 describe('forwardEmail', () => {
   it('returns success with new messageId + threadId', async () => {
     const mockGmail = makeMockGmailForForward({
@@ -106,7 +132,7 @@ describe('forwardEmail', () => {
     );
 
     const sentRaw = mockGmail.users.messages.send.mock.calls[0][0].requestBody.raw;
-    const decodedMime = decodeBase64Url(sentRaw);
+    const decodedMime = readableBody(decodeBase64Url(sentRaw));
 
     expect(decodedMime).toContain('---------- Forwarded message ----------');
     expect(decodedMime).toContain('From: sender@example.com');
@@ -130,8 +156,8 @@ describe('forwardEmail', () => {
       mockGmail as any
     );
 
-    const decodedMime = decodeBase64Url(
-      mockGmail.users.messages.send.mock.calls[0][0].requestBody.raw
+    const decodedMime = readableBody(
+      decodeBase64Url(mockGmail.users.messages.send.mock.calls[0][0].requestBody.raw)
     );
     const additionalIdx = decodedMime.indexOf('FYI bitte juristisch prüfen.');
     const separatorIdx = decodedMime.indexOf('---------- Forwarded message ----------');

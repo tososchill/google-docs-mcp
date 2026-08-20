@@ -3,6 +3,7 @@ import { UserError } from 'fastmcp';
 import { z } from 'zod';
 import { gmail_v1 } from 'googleapis';
 import { getGmailClient } from '../../clients.js';
+import { encodeHeaderValue, encodeAddressHeader, encodeTextPart } from './_mime.js';
 
 export const forwardEmailParams = z.object({
   messageId: z.string().describe('The Gmail message ID to forward (from searchEmails results).'),
@@ -88,7 +89,7 @@ async function collectAttachments(
   }
 }
 
-function buildMimeMessage(opts: {
+function buildForwardMime(opts: {
   to: string;
   subject: string;
   referencesHeader: string | null;
@@ -96,8 +97,9 @@ function buildMimeMessage(opts: {
   attachments: CollectedAttachment[];
 }): string {
   const { to, subject, referencesHeader, bodyText, attachments } = opts;
-  let mime = `To: ${to}\r\n`;
-  mime += `Subject: ${subject}\r\n`;
+  const textPart = encodeTextPart(bodyText);
+  let mime = `To: ${encodeAddressHeader(to)}\r\n`;
+  mime += `Subject: ${encodeHeaderValue(subject)}\r\n`;
   if (referencesHeader) {
     mime += `References: ${referencesHeader}\r\n`;
     mime += `In-Reply-To: ${referencesHeader}\r\n`;
@@ -106,8 +108,8 @@ function buildMimeMessage(opts: {
 
   if (attachments.length === 0) {
     mime += `Content-Type: text/plain; charset=UTF-8\r\n`;
-    mime += `Content-Transfer-Encoding: 7bit\r\n\r\n`;
-    mime += bodyText;
+    mime += `Content-Transfer-Encoding: ${textPart.encoding}\r\n\r\n`;
+    mime += textPart.payload;
     return mime;
   }
 
@@ -115,8 +117,8 @@ function buildMimeMessage(opts: {
   mime += `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n`;
   mime += `--${boundary}\r\n`;
   mime += `Content-Type: text/plain; charset=UTF-8\r\n`;
-  mime += `Content-Transfer-Encoding: 7bit\r\n\r\n`;
-  mime += bodyText + '\r\n';
+  mime += `Content-Transfer-Encoding: ${textPart.encoding}\r\n\r\n`;
+  mime += textPart.payload + '\r\n';
 
   for (const att of attachments) {
     mime += `--${boundary}\r\n`;
@@ -171,7 +173,7 @@ export async function executeForwardEmail(
     `To: ${origTo}\n\n` +
     origPlainBody;
 
-  const mime = buildMimeMessage({
+  const mime = buildForwardMime({
     to: args.to,
     subject: newSubject,
     referencesHeader: origMessageId || null,
