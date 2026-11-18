@@ -19,14 +19,18 @@ export function register(server: FastMCP) {
         const response = await drive.files.get({
           fileId: args.folderId,
           fields:
-            'id,name,description,createdTime,modifiedTime,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName),shared,parents',
+            'id,name,mimeType,description,createdTime,modifiedTime,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName),shared,parents',
           supportsAllDrives: true,
         });
 
         const file = response.data;
 
+        // mimeType muss oben in `fields` stehen: die Drive-API liefert nur angefragte Felder,
+        // ohne es war file.mimeType immer undefined und jeder Ordner galt als "kein Ordner".
         if (file.mimeType !== 'application/vnd.google-apps.folder') {
-          throw new UserError('The specified ID does not belong to a folder.');
+          throw new UserError(
+            `The specified ID does not belong to a folder (mimeType: ${file.mimeType ?? 'unknown'}).`
+          );
         }
 
         const info = {
